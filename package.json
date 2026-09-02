@@ -1,0 +1,23 @@
+{
+  "name": "hauzral-video-pipeline",
+  "version": "1.0.0",
+  "description": "Cross-platform video publishing/reposting pipeline that emits per-cycle JSON (status, metrics, optimization insights, next-cycle recommendations)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "seed": "node src/utils/seed.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7",
+    "zod": "^3.23.8"
+  }
+}

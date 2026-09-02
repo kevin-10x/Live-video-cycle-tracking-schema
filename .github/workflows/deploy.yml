@@ -1,0 +1,41 @@
+name: Deploy (VPS via SSH)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deploy environment
+        required: true
+        default: production
+        type: choice
+        options: [production, staging]
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "video-pipeline"
+          target: "~/apps"
+
+      - name: Build and restart on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/apps/video-pipeline
+            docker compose down || true
+            docker compose up -d --build
+            docker image prune -f || true
