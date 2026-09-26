@@ -13,6 +13,7 @@ const testDb = path.join(os.tmpdir(), `vp-test-${process.pid}-${Date.now()}.db`)
 process.env.DB_PATH = testDb;
 
 const { default: app } = await import('../src/app.js');
+const { migrationReady } = await import('../src/db/migrate.js');
 const { storeVideo } = await import('../src/utils/store.js');
 const { fingerprintVideo } = await import('../src/utils/video.js');
 
@@ -27,6 +28,10 @@ let base;
 let videoId;
 
 before(async () => {
+  // Migrations run asynchronously on import; querying before they finish fails
+  // with "no such table".
+  await migrationReady;
+
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
   base = `http://127.0.0.1:${server.address().port}`;
