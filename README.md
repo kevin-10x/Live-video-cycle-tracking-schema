@@ -35,7 +35,14 @@ POST /api/cycles  ->  {
 - **Reposting** — schedule a fresh cycle for an existing video on demand (new `cycle_id`, `timestamp`, metrics).
 - **Schema-validated contract** — every emitted and stored cycle is validated against a Zod schema; an
   endpoint validates arbitrary JSON against the same contract.
-- **Docker + CI/CD** — Dockerfile, docker-compose, GitHub Actions (test, build image, publish to GHCR, deploy).
+- **Docker + CI/CD** — Dockerfile, docker-compose, GitHub Actions (test, audit, secret scan, build image, publish to GHCR, deploy).
+
+## Status
+
+Independent, self-contained repository. Nothing in the code, Dockerfiles or
+workflows depends on a parent directory or a sibling project. See
+[CHANGELOG.md](CHANGELOG.md) for what is verified and
+[SECURITY.md](SECURITY.md) for the required production configuration.
 
 ## Quick start (local)
 
@@ -109,11 +116,16 @@ docker compose up --build        # http://localhost:4100
 
 ## CI/CD
 
-- `.github/workflows/ci.yml` — tests + container build on every push/PR.
+- `.github/workflows/ci.yml` — tests, production dependency audit, committed-secret
+  scan, and a container build on every push/PR. Required checks: `Test`,
+  `Dependency audit`, `Secret scan`, `Build Docker image`.
 - `.github/workflows/docker-publish.yml` — builds and pushes the image to
   `ghcr.io/<owner>/live-video-cycle-tracking-schema` on `main` and version tags.
 - `.github/workflows/deploy.yml` — (manually triggered) deploys to a VPS over SSH with
   `docker compose up -d --build`. Set repo secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
+
+The package is private by default, so pulling the image needs
+`docker login ghcr.io` with a token that has `read:packages`.
 
 ## Testing
 
@@ -123,9 +135,15 @@ npm test        # node --test: schema, optimizer, video util, and API integratio
 
 ## Project structure
 
+This repository is self-contained: the service is its own root, and no path in
+the code, Dockerfiles or workflows refers to a parent directory or a sibling
+project.
+
 ```
-video-pipeline/
+.
   Dockerfile, docker-compose.yml, railway.json, Procfile
+  .nvmrc                  # pins Node 20 for local, CI and image
+  .editorconfig           # shared formatting basics
   src/
     server.js           # entry point
     app.js              # Express wiring

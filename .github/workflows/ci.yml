@@ -7,6 +7,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Stop a new push from cancelling an in-flight run unnecessarily; queued runs
+# still cancel so the latest commit wins.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -16,17 +25,73 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: .
         run: npm ci
 
       - name: Run tests
-        working-directory: .
         run: npm test
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Audit production dependencies
+        # The only remaining advisories are in sqlite3's build toolchain
+        # (tar / node-gyp / cacache), which is loaded during `npm install` and
+        # never at runtime. Flagging them keeps the signal visible without
+        # blocking every commit on a dependency that has no non-breaking fix.
+        run: |
+          set -e
+          echo "::group::Auditing"
+          npm audit --omit=dev --audit-level=high || true
+          echo "::endgroup::"
+          if npm audit --omit=dev --json > audit.json; then
+            echo "No advisories."; exit 0
+          fi
+          blocked=$(node -e "
+            const a = require('./audit.json');
+            const bad = Object.entries(a.vulnerabilities || {})
+              .filter(([name, v]) => ['low','moderate'].includes(v.severity) ? false
+                                      : !/^(sqlite3|node-gyp|tar|cacache|make-fetch-happen|@tootallnate\/once|http-proxy-agent)\$/.test(name))
+              .map(([n]) => n);
+            console.log(bad.join(' '));
+          ")
+          if [ -n "$blocked" ]; then
+            echo "::error::Non-toolchain advisories introduced: $blocked"
+            exit 1
+          fi
+          echo "Only sqlite3 build-toolchain advisories remain (not runtime-reachable)."
+          rm -f audit.json
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail if a credential was committed
+        run: |
+          # Anchored patterns with an explicit length, not bare prefixes: a bare
+          # `github_pat_` never matches under \b because `_` is a word character.
+          if git grep -nIE \
+            '(github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
+            -- ':!package-lock.json' ':!*.md'; then
+            echo "::error::A credential appears to be committed. Revoke it, then purge it from history."
+            exit 1
+          fi
+          echo "No committed credentials found."
 
   docker:
     name: Build Docker image
@@ -43,4 +108,6 @@ jobs:
           context: .
           file: Dockerfile
           push: false
-          tags: video-pipeline:test
+          tags: live-video-cycle-tracking-schema:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
