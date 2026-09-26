@@ -4,10 +4,13 @@ import './db/migrate.js';
 import { config } from './config/index.js';
 import { cyclesRouter, videosRouter } from './routes/cycles.js';
 import { notFound, errorHandler } from './utils/http.js';
+import { buildCorsOptions } from './utils/cors.js';
 
 const app = express();
 
-app.use(cors({ origin: config.corsOrigin.split(',') }));
+// Resolve the CORS allow-list. See utils/cors.js for why a bare "*" must not
+// become the array ['*'].
+app.use(cors(buildCorsOptions(config.corsOrigin)));
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));

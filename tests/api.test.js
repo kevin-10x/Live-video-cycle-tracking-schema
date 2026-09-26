@@ -63,6 +63,42 @@ test('runs a full publish cycle and returns a schema-valid envelope', async () =
   assert.ok(cycle.next_cycle_recommendations.every((r) => r.priority));
 });
 
+test('runs a publish cycle for an INLINE video (no stored video_id)', async () => {
+  // Regression: cycles.video_id was NOT NULL, so posting an inline video —
+  // the documented request shape — failed with a 500 constraint error.
+  const { status, json } = await call('POST', '/api/cycles', {
+    video: {
+      title: 'Inline video',
+      file_path: 'https://cdn.example.com/inline.mp4',
+      duration: 30,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+    },
+  });
+  assert.equal(status, 201, JSON.stringify(json));
+  assert.ok(json.data.cycle_id);
+  assert.equal(json.data.video_fingerprint.length, 64);
+});
+
+test('a cycle created from an inline video can be listed and fetched', async () => {
+  const created = await call('POST', '/api/cycles', {
+    video: { title: 'Listable', file_path: 'https://cdn.example.com/l.mp4', duration: 20 },
+  });
+  const id = created.json.data.cycle_id;
+  const list = await call('GET', '/api/cycles');
+  const found = list.json.data.find((c) => c.cycle_id === id);
+  assert.ok(found, 'inline cycle should be persisted and listed');
+  const one = await call('GET', `/api/cycles/${id}`);
+  assert.equal(one.status, 200);
+  assert.equal(one.json.data.cycle_id, id);
+});
+
+test('rejects a cycle request with neither video nor video_id', async () => {
+  const { status } = await call('POST', '/api/cycles', {});
+  assert.equal(status, 400);
+});
+
 test('lists cycles from the API', async () => {
   const { status, json } = await call('GET', '/api/cycles');
   assert.equal(status, 200);
