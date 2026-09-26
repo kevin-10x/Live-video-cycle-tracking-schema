@@ -1,5 +1,11 @@
 node_modules/
-data/*.db
-data/*.db-journal
 .env
 dist/
+
+# SQLite lives here and is recreated on boot; never commit it.
+data/
+
+# Unrelated sibling projects that live in this directory but are not part of
+# this service. Tracked in their own repositories.
+HAUZRAL-TECHNOLOGIES/
+mobile web/
