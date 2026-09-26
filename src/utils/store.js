@@ -1,5 +1,5 @@
 import { all, get, run } from '../db/index.js';
-import { validateCycle } from '../schema/cycle.js';
+import { cycleSchema } from '../schema/cycle.js';
 
 export async function listCycles({ limit = 20, offset = 0 } = {}) {
   const totalRow = await get('SELECT COUNT(*) as total FROM cycles');
@@ -8,10 +8,18 @@ export async function listCycles({ limit = 20, offset = 0 } = {}) {
     [limit, offset]
   );
   const cycles = [];
+  const skipped = [];
   for (const row of rows) {
-    cycles.push(await buildCycle(row));
+    // One unreadable row must not fail the whole page. Report what was skipped
+    // so the data problem is still visible instead of silently disappearing.
+    try {
+      cycles.push(await buildCycle(row));
+    } catch (e) {
+      console.error(`[store] skipping unreadable cycle ${row.id}: ${e.message}`);
+      skipped.push({ cycle_id: row.id, reason: e.schema_issues || e.message });
+    }
   }
-  return { cycles, total: totalRow.total };
+  return { cycles, total: totalRow.total, skipped };
 }
 
 export async function getCycle(id) {
@@ -40,8 +48,18 @@ async function buildCycle(row) {
     optimization_insights: JSON.parse(row.insights_json || '[]'),
     next_cycle_recommendations: JSON.parse(row.recommendations_json || '[]'),
   };
-  // Normalize on read so stored data always satisfies the schema.
-  return validateCycle(cycle);
+  // Normalize on read so stored data always satisfies the schema. A row that
+  // predates a schema change, or was written by an older build, must not take
+  // down the whole list: skip it and say so rather than 500-ing every caller.
+  const parsed = cycleSchema.safeParse(cycle);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
+    const err = new Error(`Stored cycle ${row.id} does not satisfy the schema: ${detail.join('; ')}`);
+    err.cycle_id = row.id;
+    err.schema_issues = detail;
+    throw err;
+  }
+  return parsed.data;
 }
 
 export async function storeVideo(video) {

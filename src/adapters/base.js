@@ -1,4 +1,4 @@
-// Adapter contract: every platform implements publishMetrics() and fetchMetrics().
+// Adapter contract: every platform implements publish() and fetchMetrics().
 // Real adapters (youtube, tiktok) hit their public APIs when credentials are
 // configured; otherwise they degrade to simulated mode so the whole pipeline is
 // runnable without keys.
@@ -57,7 +57,9 @@ export class BasePlatformAdapter {
     };
   }
 
-  // Returns metrics_1h for a previously published item.
+  // Returns metrics_1h for a previously published item. The external id is
+  // passed in per call rather than held on the instance: adapters are shared
+  // singletons, so instance state would be overwritten by concurrent cycles.
   async fetchMetrics() {
     await this._simulateLatency();
     return this._simulateMetrics();

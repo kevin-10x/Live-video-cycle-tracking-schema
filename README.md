@@ -40,13 +40,17 @@ POST /api/cycles  ->  {
 ## Status
 
 Independent, self-contained repository. Nothing in the code, Dockerfiles or
-workflows depends on a parent directory or a sibling project. See
-[CHANGELOG.md](CHANGELOG.md) for what is verified and
-[SECURITY.md](SECURITY.md) for the required production configuration.
+workflows depends on a parent directory or a sibling project.
+
+**Not production-ready as an internet-facing service.** There is no
+authentication, no rate limiting, and `CORS_ORIGIN` defaults to `*`. With no
+platform credentials every adapter returns *simulated* metrics flagged with
+`_simulated: true`. Read [SECURITY.md](SECURITY.md) before exposing it, and
+[CHANGELOG.md](CHANGELOG.md) for what is verified.
 
 ## Quick start (local)
 
-Requirements: Node.js ≥ 18.
+Requirements: Node.js 20 (pinned in `.nvmrc`; `npm ci` and `npm test` expect it).
 
 ```bash
 cd video-pipeline

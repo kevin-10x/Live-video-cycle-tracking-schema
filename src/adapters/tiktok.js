@@ -17,6 +17,7 @@ export class TikTokAdapter extends BasePlatformAdapter {
 
   async publish({ video, variant }) {
     if (!this.isConfigured()) {
+      this.simulated = true;
       const id = externalId(this.name);
       return { url: buildUrl(this.name, id), external_id: id, variant_id: variant.id };
     }
@@ -62,6 +63,7 @@ export class TikTokAdapter extends BasePlatformAdapter {
     }
 
     await this._uploadChunks(data.upload_url, data.video);
+    this.simulated = false;
     const id = data.publish_id;
 
     // Real URL derivation requires the video id; use publish_id placeholder URL.
@@ -92,19 +94,20 @@ export class TikTokAdapter extends BasePlatformAdapter {
     }
   }
 
-  async fetchMetrics() {
-    if (this.isConfigured() && this._externalId) {
-      const url = `https://open.tiktokapis.com/v2/video/query/?fields=view_count,like_count,share_count,comment_count`;
+  async fetchMetrics(externalIdArg) {
+    if (this.isConfigured() && externalIdArg) {
+      const url = 'https://open.tiktokapis.com/v2/video/query/?fields=view_count,like_count,share_count,comment_count';
       try {
         const res = await fetch(url, {
           method: 'POST',
           headers: { Authorization: `Bearer ${this.cfg.accessToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filters: { video_ids: [this._externalId] } }),
+          body: JSON.stringify({ filters: { video_ids: [externalIdArg] } }),
         });
         if (res.ok) {
           const data = await res.json();
           const item = data && data.data && data.data.videos && data.data.videos[0];
           if (item) {
+            this.simulated = false;
             return {
               views: item.view_count || 0,
               likes: item.like_count || 0,
@@ -112,15 +115,16 @@ export class TikTokAdapter extends BasePlatformAdapter {
               comments: item.comment_count || 0,
             };
           }
+          this.metricsError = 'TikTok video query returned no data';
+        } else {
+          this.metricsError = `TikTok video query unavailable (HTTP ${res.status})`;
         }
-      } catch {
-        // fall through
+      } catch (e) {
+        this.metricsError = `TikTok video query failed: ${e.message}`;
       }
     }
+    // The real call produced nothing; do not pass placeholders off as results.
+    this.simulated = true;
     return this._simulateMetrics();
-  }
-
-  setExternalId(id) {
-    this._externalId = id;
   }
 }

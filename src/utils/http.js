@@ -28,7 +28,11 @@ export function notFound(req, res, next) {
 
 export function errorHandler(err, req, res, next) {
   const status = err.status || 500;
-  const message = err.message || 'Internal server error';
   if (status >= 500) console.error(err);
+  // Never echo an unexpected error's message to the client: it leaks internal
+  // paths, stack detail and validation schemas. Unexpected errors are logged
+  // server-side and reported generically. ApiError messages are authored here
+  // and are safe to return.
+  const message = err.status ? err.message : 'Internal server error';
   res.status(status).json({ success: false, error: message, details: err.details });
 }

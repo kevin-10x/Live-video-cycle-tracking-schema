@@ -21,6 +21,7 @@ export class YouTubeAdapter extends BasePlatformAdapter {
   async publish({ video, variant }) {
     if (!this.isConfigured()) {
       // no credentials -> simulated
+      this.simulated = true;
       const id = externalId(this.name);
       return { url: buildUrl(this.name, id), external_id: id, variant_id: variant.id };
     }
@@ -35,6 +36,7 @@ export class YouTubeAdapter extends BasePlatformAdapter {
         platform: this.name,
       });
     }
+    this.simulated = false;
 
     const endpoint = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
     const initRes = await fetch(endpoint, {
@@ -71,11 +73,11 @@ export class YouTubeAdapter extends BasePlatformAdapter {
     return { url: buildUrl(this.name, id), external_id: id, variant_id: variant.id };
   }
 
-  async fetchMetrics() {
-    // Real players have an external_id; we only get called with it when this
+  async fetchMetrics(externalIdArg) {
+    // Real players have an external_id; we only get called with one when this
     // adapter published for real. Key-based read works without OAuth.
-    if (this.isConfigured() && this._externalId) {
-      const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${this._externalId}&key=${this.cfg.apiKey}`;
+    if (this.isConfigured() && externalIdArg) {
+      const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${encodeURIComponent(externalIdArg)}&key=${encodeURIComponent(this.cfg.apiKey)}`;
       try {
         const res = await fetch(url);
         if (res.ok) {
@@ -83,6 +85,7 @@ export class YouTubeAdapter extends BasePlatformAdapter {
           const item = data.items && data.items[0];
           if (item && item.statistics) {
             const s = item.statistics;
+            this.simulated = false;
             return {
               views: parseInt(s.viewCount || '0', 10),
               likes: parseInt(s.likeCount || '0', 10),
@@ -90,15 +93,15 @@ export class YouTubeAdapter extends BasePlatformAdapter {
             };
           }
         }
-      } catch {
-        // fall through to simulation
+        this.metricsError = `YouTube statistics unavailable (HTTP ${res.status})`;
+      } catch (e) {
+        this.metricsError = `YouTube statistics request failed: ${e.message}`;
       }
     }
+    // The real call did not produce data. Returning sample numbers here would be
+    // indistinguishable from a real low-performing video, so the orchestrator is
+    // told via metricsError and the cycle records the failure.
+    this.simulated = true;
     return this._simulateMetrics();
-  }
-
-  // Orchestrator sets this before fetching metrics for a real publication.
-  setExternalId(id) {
-    this._externalId = id;
   }
 }

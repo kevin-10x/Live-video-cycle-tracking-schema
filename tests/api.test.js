@@ -148,3 +148,169 @@ test('validates cycle JSON via the validate endpoint', async () => {
   assert.equal(okRes.status, 200);
   assert.equal(okRes.json.data.valid, true);
 });
+
+// --- Regression tests for defects found during review ---------------------
+
+test('adapters hold no per-request state on the shared instance', async () => {
+  const { getAdapter } = await import('../src/adapters/index.js');
+  const adapter = getAdapter('youtube');
+  // getAdapter returns a singleton, so any external id stashed on the instance
+  // would be clobbered by a concurrent cycle. fetchMetrics takes it per call.
+  assert.equal(typeof adapter.fetchMetrics, 'function');
+  assert.ok(!('_externalId' in adapter), 'adapter must not accumulate external ids');
+  assert.equal(typeof adapter.setExternalId, 'undefined', 'setExternalId should be removed');
+});
+
+test('fetchMetrics receives the external id of the item just published', async () => {
+  const { getAdapter } = await import('../src/adapters/index.js');
+  const { runCycle } = await import('../src/engine/orchestrator.js');
+  const seen = [];
+  const adapter = getAdapter('youtube');
+  const original = adapter.fetchMetrics.bind(adapter);
+  adapter.fetchMetrics = async (id) => {
+    seen.push(id);
+    return original(id);
+  };
+  try {
+    const cycle = await runCycle({ title: 'id plumbing', file_path: 'f.mp4', duration: 5 });
+    const publishedId = cycle.platforms.youtube.url.split('v=')[1];
+    assert.ok(publishedId, 'a youtube url must be produced');
+    assert.ok(seen.includes(publishedId), 'fetchMetrics must be given the published external id');
+  } finally {
+    adapter.fetchMetrics = original;
+  }
+});
+
+test('concurrent cycles each pass their own external id to fetchMetrics', async () => {
+  const { getAdapter } = await import('../src/adapters/index.js');
+  const { runCycle } = await import('../src/engine/orchestrator.js');
+  const adapter = getAdapter('youtube');
+  const received = [];
+  const original = adapter.fetchMetrics.bind(adapter);
+  adapter.fetchMetrics = async (id) => {
+    // Yield so the cycles genuinely overlap rather than running one at a time.
+    await new Promise((r) => setImmediate(r));
+    received.push(id);
+    return original(id);
+  };
+  try {
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        runCycle({ title: `concurrent ${i}`, file_path: `c${i}.mp4`, duration: 5 })
+      )
+    );
+    const ownIds = results.map((c) => c.platforms.youtube.url.split('v=')[1]);
+    assert.equal(new Set(ownIds).size, 6, 'each cycle must publish a distinct id');
+    assert.equal(received.length, 6, 'fetchMetrics runs once per cycle');
+    // The id is threaded through as an argument, so it cannot be reassigned by
+    // an interleaved cycle. This is the property that makes the shared-instance
+    // race impossible rather than merely unlikely.
+    assert.deepEqual(
+      [...received].sort(),
+      [...ownIds].sort(),
+      'each cycle must pass the id of the video it just published'
+    );
+  } finally {
+    adapter.fetchMetrics = original;
+  }
+});
+
+test('GET /api/cycles/platforms is not shadowed by the /:id route', async () => {
+  const { status, json } = await call('GET', '/api/cycles/platforms');
+  assert.equal(status, 200);
+  assert.ok(Array.isArray(json.data));
+  assert.ok(json.data.includes('youtube'));
+
+  // Static paths must be registered before the '/:id' catch-all, otherwise a
+  // future static route silently becomes "Cycle not found".
+  const bogus = await call('GET', '/api/cycles/definitely-not-a-real-id');
+  assert.equal(bogus.status, 404);
+  assert.equal(bogus.json.error, 'Cycle not found');
+});
+
+test('a corrupt stored row does not break the whole list endpoint', async () => {
+  const { run, get } = await import('../src/db/index.js');
+  const good = '22222222-2222-4222-8222-222222222222';
+  const bad = 'corrupt-cycle-row';
+  await run(
+    'INSERT INTO cycles (id,video_fingerprint,timestamp_utc,status) VALUES (?,?,?,?)',
+    [good, 'a'.repeat(64), new Date().toISOString(), 'published']
+  );
+  await run(
+    'INSERT INTO cycles (id,video_fingerprint,timestamp_utc,status) VALUES (?,?,?,?)',
+    [bad, 'too-short', new Date().toISOString(), 'published']
+  );
+
+  const { status, json } = await call('GET', '/api/cycles?limit=100');
+  assert.equal(status, 200, 'a bad row must not 500 the list endpoint');
+  assert.ok(json.data.some((c) => c.cycle_id === good), 'valid rows must still be returned');
+  // The skipped row is reported rather than silently dropped.
+  assert.ok(Array.isArray(json.meta.skipped), 'skipped rows must be surfaced in meta');
+  assert.ok(json.meta.skipped.some((s) => s.cycle_id === bad));
+});
+
+test('unexpected errors do not leak internals to the client', async () => {
+  // Fetching the corrupt row directly triggers an unhandled schema failure.
+  const { status, json } = await call('GET', '/api/cycles/corrupt-cycle-row');
+  assert.equal(status, 500);
+  assert.equal(json.error, 'Internal server error');
+  // No stack, no zod issue paths, no filesystem paths.
+  const serialised = JSON.stringify(json);
+  assert.ok(!serialised.includes('node_modules'), 'must not expose dependency paths');
+  assert.ok(!/\/home\/|\/app\/|at Object|\.js:\d+/.test(serialised), 'must not expose paths or stack frames');
+});
+
+test('authored 4xx messages are still returned to the client', async () => {
+  const missing = await call('GET', '/api/cycles/definitely-missing');
+  assert.equal(missing.status, 404);
+  assert.equal(missing.json.error, 'Cycle not found');
+
+  const noBody = await call('POST', '/api/cycles', {});
+  assert.equal(noBody.status, 400);
+  assert.equal(noBody.json.error, 'Provide a video or video_id');
+
+  const badPlatforms = await call('POST', '/api/cycles', { video: { title: 't' }, platforms: 'nope' });
+  assert.equal(badPlatforms.status, 400);
+  assert.equal(badPlatforms.json.error, 'platforms must be an array');
+});
+
+test('the _simulated flag reflects whether metrics are real', async () => {
+  const { getAdapter } = await import('../src/adapters/index.js');
+  const { runCycle } = await import('../src/engine/orchestrator.js');
+  const adapter = getAdapter('youtube');
+
+  // No credentials -> everything is simulated, and that must be flagged.
+  const cycle = await runCycle({ title: 'sim flag', file_path: 'f.mp4', duration: 5 }, { platforms: ['youtube'] });
+  assert.equal(cycle.platforms.youtube.metrics_1h._simulated, true, 'unconfigured adapters must flag simulation');
+  assert.equal(cycle.errors.length, 0, 'a deliberately simulated cycle is not an error');
+});
+
+test('a real metrics call that fails is recorded, not silently faked', async () => {
+  const { getAdapter } = await import('../src/adapters/index.js');
+  const { runCycle } = await import('../src/engine/orchestrator.js');
+  const adapter = getAdapter('youtube');
+  const originalPublish = adapter.publish.bind(adapter);
+  const originalConfigured = adapter.isConfigured.bind(adapter);
+  const originalFetch = globalThis.fetch;
+
+  adapter.isConfigured = () => true; // pretend credentials exist
+  adapter.publish = async ({ variant }) => ({
+    url: 'https://www.youtube.com/watch?v=real-id-123',
+    external_id: 'real-id-123',
+    variant_id: variant.id,
+  });
+  globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+
+  try {
+    const cycle = await runCycle({ title: 'real fail', file_path: 'f.mp4', duration: 5 }, { platforms: ['youtube'] });
+    const entry = cycle.errors.find((e) => e.code === 'METRICS_UNAVAILABLE');
+    assert.ok(entry, 'a failed real metrics call must appear in cycle.errors');
+    assert.equal(entry.platform, 'youtube');
+    assert.match(entry.message, /503/);
+    assert.equal(cycle.platforms.youtube.metrics_1h._simulated, true, 'fallback numbers are still simulated');
+  } finally {
+    adapter.publish = originalPublish;
+    adapter.isConfigured = originalConfigured;
+    globalThis.fetch = originalFetch;
+  }
+});

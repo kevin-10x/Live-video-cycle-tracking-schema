@@ -11,8 +11,8 @@ cyclesRouter.get(
   asyncHandler(async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20', 10) || 20));
-    const { cycles, total } = await listCycles({ limit, offset: (page - 1) * limit });
-    ok(res, cycles, { page, limit, total });
+    const { cycles, total, skipped } = await listCycles({ limit, offset: (page - 1) * limit });
+    ok(res, cycles, { page, limit, total, ...(skipped.length ? { skipped } : {}) });
   })
 );
 
@@ -64,14 +64,6 @@ cyclesRouter.post(
     const { platforms } = req.body || {};
     const cycle = await repostCycle(row, { platforms, video_id: row.id });
     created(res, cycle);
-  })
-);
-
-// Provide a "library" endpoint for showing available platforms.
-cyclesRouter.get(
-  '/platforms',
-  asyncHandler(async (req, res) => {
-    ok(res, registeredPlatforms());
   })
 );
 

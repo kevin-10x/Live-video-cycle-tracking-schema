@@ -84,13 +84,26 @@ export async function runCycle(video, { platforms, video_id } = {}) {
         variant_id: variant.id,
         metrics_1h: {},
       };
-      // Collect first-hour metrics.
-      const metrics = await adapter.fetchMetrics();
-      if (adapter.setExternalId) adapter.setExternalId(pub.external_id);
+      // The external id is passed per call rather than stashed on the adapter:
+      // adapters are shared singletons, so instance state would be clobbered by
+      // concurrent cycles. Adapters that read real statistics (YouTube
+      // videos.list, TikTok video/query) need the id of what was just published.
+      const metrics = await adapter.fetchMetrics(pub.external_id);
       entry.metrics_1h = {
         ...metrics,
         _simulated: adapter.simulated,
       };
+      // A real metrics call that failed returns placeholder numbers. Record the
+      // reason in cycle.errors so nobody reads those numbers as real performance.
+      if (adapter.metricsError) {
+        cycle.errors.push({
+          platform,
+          message: adapter.metricsError,
+          code: 'METRICS_UNAVAILABLE',
+          retryable: true,
+        });
+        adapter.metricsError = null;
+      }
 
       cycle.platforms[platform] = entry;
     } catch (e) {
