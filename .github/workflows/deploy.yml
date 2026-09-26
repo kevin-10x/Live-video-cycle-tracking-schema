@@ -25,7 +25,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "video-pipeline"
+          source: "."
           target: "~/apps"
 
       - name: Build and restart on server
@@ -35,7 +35,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd ~/apps/video-pipeline
+            cd ~/apps/live-video-cycle-tracking-schema
             docker compose down || true
             docker compose up -d --build
             docker image prune -f || true

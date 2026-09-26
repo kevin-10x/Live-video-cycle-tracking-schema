@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 dotenv.config();
@@ -24,6 +25,15 @@ export const config = {
     },
   },
 };
+
+// SQLite will not create missing parent directories, and `data/` is gitignored
+// so it is absent in a fresh clone and in some container/volume setups. Without
+// this the first connection fails with SQLITE_CANTOPEN.
+try {
+  fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
+} catch (e) {
+  console.error(`[config] Could not create database directory for ${config.dbPath}: ${e.message}`);
+}
 
 export function platformConfigured(name) {
   const p = (config.platforms && config.platforms[name]) || {};

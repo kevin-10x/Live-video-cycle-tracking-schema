@@ -18,14 +18,14 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: video-pipeline/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: video-pipeline
+        working-directory: .
         run: npm ci
 
       - name: Run tests
-        working-directory: video-pipeline
+        working-directory: .
         run: npm test
 
   docker:
@@ -40,7 +40,7 @@ jobs:
       - name: Build image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: video-pipeline
-          file: video-pipeline/Dockerfile
+          context: .
+          file: Dockerfile
           push: false
           tags: video-pipeline:test

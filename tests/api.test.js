@@ -3,12 +3,24 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 
-process.env.DB_PATH = path.join(os.tmpdir(), `vp-test-${Date.now()}.db`);
+// DB_PATH must be set BEFORE any module reads it. ESM hoists static imports
+// above top-level statements, so assigning here and importing afterwards would
+// be too late -- config would fall back to data/video-pipeline.db and the test
+// would run against (and pollute) the development database.
+const testDb = path.join(os.tmpdir(), `vp-test-${process.pid}-${Date.now()}.db`);
+process.env.DB_PATH = testDb;
 
 const { default: app } = await import('../src/app.js');
-import { storeVideo } from '../src/utils/store.js';
-import { fingerprintVideo } from '../src/utils/video.js';
+const { storeVideo } = await import('../src/utils/store.js');
+const { fingerprintVideo } = await import('../src/utils/video.js');
+
+after(() => {
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    fs.rmSync(testDb + suffix, { force: true });
+  }
+});
 
 let server;
 let base;
