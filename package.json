@@ -8,7 +8,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "seed": "node src/utils/seed.js",
-    "test": "node --test"
+    "test": "node --test tests/"
   },
   "engines": {
     "node": ">=20"
